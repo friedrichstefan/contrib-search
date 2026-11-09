@@ -82,6 +82,7 @@ func CreateRouter(svc SearchService, mws []func(http.Handler) http.Handler) *chi
 		}
 
 		resource := strings.TrimSpace(r.URL.Query().Get("resource"))
+		selectedFields := parseFieldsParam(r.URL.Query().Get("fields"))
 
 		filters, fgaRole, err := parseSearchFilters(r.URL.Query())
 		if err != nil {
@@ -114,6 +115,7 @@ func CreateRouter(svc SearchService, mws []func(http.Handler) http.Handler) *chi
 				Limit:        limit,
 				Page:         page,
 				Cursor:       strings.TrimSpace(r.URL.Query().Get("cursor")),
+				Fields:       selectedFields,
 			})
 			if err != nil {
 				handleError(w, r, rc, err)
@@ -225,6 +227,16 @@ func parseResources(raw string) []string {
 		}
 	}
 	return resources
+}
+
+func parseFieldsParam(raw string) []string {
+	var fields []string
+	for _, f := range strings.Split(raw, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			fields = append(fields, f)
+		}
+	}
+	return fields
 }
 
 func parseOptionalLimit(raw string) (int, error) {

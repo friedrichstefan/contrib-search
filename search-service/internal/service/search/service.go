@@ -170,6 +170,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 
 	qHash := queryHash(query)
 	fHash := cursorFiltersHash(filters, fgaRole)
+	fieldHash := cursorFieldsHash(req.Fields)
 	sort := cursorSort(sortField, sortOrder)
 	var searchAfter []any
 	if req.Cursor != "" {
@@ -177,7 +178,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 		if err != nil {
 			return SearchResponse{}, err
 		}
-		if err := ValidateCursor(decoded, org, qHash, mode, resource, fHash, sort, limit); err != nil {
+		if err := ValidateCursor(decoded, org, qHash, mode, resource, fHash, fieldHash, sort, limit); err != nil {
 			log.Error().Err(err).Str("searchmode", mode).Str("cursor", req.Cursor).Msg("invalid cursor")
 			return SearchResponse{}, err
 		}
@@ -214,6 +215,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 		indices         []string
 		resourceByIndex map[string]string
 		searchFields    []string
+		exactFields     []string
 		semanticFields  []string
 		filterQuery     map[string][]string
 		indexSortField  string
@@ -239,8 +241,40 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 
 		indices = []string{indexRef.IndexName}
 		resourceByIndex = map[string]string{indexRef.IndexName: indexRef.Resource}
-		searchFields = stringset.DedupeSorted(indexRef.DefaultFields)
-		semanticFields = stringset.DedupeSorted(indexRef.SemanticFields)
+		if len(req.Fields) > 0 {
+			callerFields := stringset.DedupeSorted(req.Fields)
+			if mode == SearchModeSemantic {
+				// Pure semantic mode: intersect caller fields with configured semantic fields
+				semSet := fieldSet(indexRef.SemanticFields)
+				for _, f := range callerFields {
+					if _, ok := semSet[f]; ok {
+						semanticFields = append(semanticFields, f)
+					}
+				}
+				semanticFields = stringset.DedupeSorted(semanticFields)
+				if len(semanticFields) == 0 {
+					return SearchResponse{}, fmt.Errorf(
+						"%w: none of the specified fields are semantic fields for resource %q",
+						ErrInvalidRequest, resource,
+					)
+				}
+			} else {
+				// Lexical/default mode: restrict to caller fields; include semantic overlap for hybrid
+				exactFields = callerFields
+				semSet := fieldSet(indexRef.SemanticFields)
+				for _, f := range callerFields {
+					if _, ok := semSet[f]; ok {
+						semanticFields = append(semanticFields, f)
+					}
+				}
+				semanticFields = stringset.DedupeSorted(semanticFields)
+			}
+		} else {
+			searchFields = stringset.DedupeSorted(indexRef.DefaultFields)
+			if mode == SearchModeSemantic {
+				semanticFields = stringset.DedupeSorted(indexRef.SemanticFields)
+			}
+		}
 		filterQuery = filters
 	} else {
 		indexRefs, err := s.resolver.ListIndices(ctx, org)
@@ -253,7 +287,12 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) (SearchResponse
 		if len(indices) == 0 {
 			return SearchResponse{}, fmt.Errorf("%w: org %q", ErrIndexUnavailable, org)
 		}
-		searchFields = searchableFieldsForRefs(indexRefs)
+		if len(req.Fields) > 0 {
+			// Multi-index: restrict lexical only; semantic is unsafe across heterogeneous indices
+			exactFields = stringset.DedupeSorted(req.Fields)
+		} else {
+			searchFields = searchableFieldsForRefs(indexRefs)
+		}
 	}
 
 	log.Debug().
@@ -279,6 +318,7 @@ outer:
 			Query:             query,
 			Mode:              mode,
 			Fields:            searchFields,
+			ExactFields:       exactFields,
 			SemanticFields:    semanticFields,
 			Filters:           filterQuery,
 			AccountFGAObjects: accountFGAObjects,
@@ -365,6 +405,7 @@ outer:
 			Mode:        mode,
 			Resource:    resource,
 			FiltersHash: fHash,
+			FieldsHash:  fieldHash,
 			Sort:        sort,
 			Limit:       limit,
 			SearchAfter: nextSearchAfter,
@@ -571,6 +612,8 @@ func responseSource(source map[string]any) map[string]any {
 
 	out := make(map[string]any, len(source))
 	maps.Copy(out, source)
+
+	delete(out, "semantic_fields")
 
 	if defaultFields, ok := out["default_fields"].(map[string]any); ok {
 		out["default_fields"] = flattenMap(defaultFields)

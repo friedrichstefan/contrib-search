@@ -31,6 +31,7 @@ type SearchRequest struct {
 	Limit        int
 	Page         int
 	Cursor       string
+	Fields       []string
 }
 
 type SearchResponse struct {
@@ -133,6 +134,7 @@ type OpenSearchQuery struct {
 	Mode              string
 	Fields            []string
 	SemanticFields    []string
+	ExactFields       []string
 	Filters           map[string][]string
 	AccountFGAObjects []string
 	Size              int

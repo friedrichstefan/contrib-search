@@ -88,7 +88,12 @@ func BuildQueryBody(req search.OpenSearchQuery) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	fields := lexicalSearchFields(req.Fields)
+	var lexicalFields []string
+	if len(req.ExactFields) > 0 {
+		lexicalFields = prefixedFields("default_fields", stringset.DedupeSorted(req.ExactFields))
+	} else {
+		lexicalFields = lexicalSearchFields(req.Fields)
+	}
 	semanticFields := prefixedFields("semantic_fields", stringset.DedupeSorted(req.SemanticFields))
 	filters := normalizeFilters(req.Filters)
 	accountFGAObjects := stringset.DedupeSorted(req.AccountFGAObjects)
@@ -103,18 +108,19 @@ func BuildQueryBody(req search.OpenSearchQuery) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build semantic query clause: %w", err)
 		}
-	} else {
-		simple := map[string]any{
-			"query":            query,
-			"default_operator": "and",
-			"lenient":          true,
-		}
-		if len(fields) > 0 {
-			simple["fields"] = fields
+	} else if len(req.ExactFields) > 0 && len(semanticFields) > 0 {
+		semanticClause, err := buildSemanticQueryClause(query, semanticFields)
+		if err != nil {
+			return nil, fmt.Errorf("build semantic query clause for hybrid mode: %w", err)
 		}
 		queryClause = map[string]any{
-			"simple_query_string": simple,
+			"bool": map[string]any{
+				"should":               []any{buildLexicalQueryClause(query, lexicalFields), semanticClause},
+				"minimum_should_match": 1,
+			},
 		}
+	} else {
+		queryClause = buildLexicalQueryClause(query, lexicalFields)
 	}
 
 	if len(filters) > 0 || len(accountFGAObjects) > 0 {
@@ -205,6 +211,18 @@ func sortClause(field, order string) []map[string]any {
 	}}, tiebreakers...)
 }
 
+func buildLexicalQueryClause(query string, fields []string) map[string]any {
+	simple := map[string]any{
+		"query":            query,
+		"default_operator": "and",
+		"lenient":          true,
+	}
+	if len(fields) > 0 {
+		simple["fields"] = fields
+	}
+	return map[string]any{"simple_query_string": simple}
+}
+
 func buildSemanticQueryClause(query string, semanticFields []string) (map[string]any, error) {
 	if len(semanticFields) == 0 {
 		return nil, fmt.Errorf("semantic mode requires at least one semantic field")
@@ -259,6 +277,7 @@ func (c *Client) Search(ctx context.Context, query search.OpenSearchQuery) (sear
 	body, err := BuildQueryBody(search.OpenSearchQuery{
 		Query:             query.Query,
 		Fields:            query.Fields,
+		ExactFields:       query.ExactFields,
 		SemanticFields:    query.SemanticFields,
 		Mode:              query.Mode,
 		Filters:           query.Filters,

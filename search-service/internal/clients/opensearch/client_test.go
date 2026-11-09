@@ -376,6 +376,75 @@ func TestClientSearchErrorStatusSentinels(t *testing.T) {
 	}
 }
 
+func TestBuildQueryBodyExactFieldsRestrictsLexicalOnly(t *testing.T) {
+	body, err := BuildQueryBody(search.OpenSearchQuery{
+		Query:       "hello",
+		ExactFields: []string{"kind", "name"},
+		Size:        10,
+	})
+	if err != nil {
+		t.Fatalf("BuildQueryBody returned error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+
+	query := payload["query"].(map[string]any)
+	simple := query["simple_query_string"].(map[string]any)
+	fields := simple["fields"].([]any)
+
+	for _, f := range fields {
+		field := f.(string)
+		if !strings.HasPrefix(field, "default_fields.") {
+			t.Fatalf("expected only default_fields.* fields, got %q", field)
+		}
+	}
+	if !containsField(fields, "default_fields.kind") || !containsField(fields, "default_fields.name") {
+		t.Fatalf("expected default_fields.kind and default_fields.name in %v", fields)
+	}
+	// Must NOT contain default lexical catch-all fields like payload_text
+	if containsField(fields, "payload_text") {
+		t.Fatalf("payload_text must not appear when ExactFields is set")
+	}
+}
+
+func TestBuildQueryBodyHybridWhenExactFieldsAndSemanticFields(t *testing.T) {
+	body, err := BuildQueryBody(search.OpenSearchQuery{
+		Query:          "hello",
+		ExactFields:    []string{"kind", "description"},
+		SemanticFields: []string{"description"},
+		Size:           10,
+	})
+	if err != nil {
+		t.Fatalf("BuildQueryBody returned error: %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+
+	query := payload["query"].(map[string]any)
+	boolQ, ok := query["bool"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected bool query at top level, got %v", query)
+	}
+	should, ok := boolQ["should"].([]any)
+	if !ok || len(should) != 2 {
+		t.Fatalf("expected 2 should clauses, got %v", boolQ["should"])
+	}
+	lexical := should[0].(map[string]any)
+	if _, ok := lexical["simple_query_string"]; !ok {
+		t.Fatalf("expected simple_query_string in first should clause, got %v", lexical)
+	}
+	semantic := should[1].(map[string]any)
+	if _, ok := semantic["neural"]; !ok {
+		t.Fatalf("expected neural in second should clause, got %v", semantic)
+	}
+}
+
 func containsField(fields []any, want string) bool {
 	for _, field := range fields {
 		if field == want {

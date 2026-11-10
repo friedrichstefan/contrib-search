@@ -966,7 +966,8 @@ func TestSearchHybridSemanticIncludedWhenFieldsOverlapSemanticFields(t *testing.
 	)
 	_, err := svc.Search(context.Background(), SearchRequest{
 		Organization: "acme", User: "alice@example.com", Query: "foo",
-		Fields: []string{"kind", "description"},
+		Resource: "accounts",
+		Fields:   []string{"kind", "description"},
 	})
 	if err != nil {
 		t.Fatalf("Search returned error: %v", err)
@@ -1028,7 +1029,7 @@ func TestSearchResponseStripsSemanticFields(t *testing.T) {
 	svc := NewService(
 		fakeResolver{index: SearchIndexRef{IndexName: "idx"}},
 		searcher,
-		&fakeAuthorizer{},
+		&fakeAuthorizer{results: []AuthorizationResult{{Allowed: []bool{true}}}},
 		nil,
 		ServiceConfig{},
 	)

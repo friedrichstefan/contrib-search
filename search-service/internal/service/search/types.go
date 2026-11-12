@@ -129,17 +129,18 @@ func (p OpenSearchPage) Partial() bool {
 }
 
 type OpenSearchQuery struct {
-	Indices           []string
-	Query             string
-	Mode              string
-	Fields            []string
-	SemanticFields    []string
-	ExactFields       []string
-	Filters           map[string][]string
-	AccountFGAObjects []string
-	Size              int
-	SearchAfter       []any
-	AggregationField  string
+	Indices                []string
+	Query                  string
+	Mode                   string
+	Fields                 []string
+	SemanticFields         []string
+	ExactFields            []string
+	FilterableSearchFields []string
+	Filters                map[string][]string
+	AccountFGAObjects      []string
+	Size                   int
+	SearchAfter            []any
+	AggregationField       string
 	// SortField is a resolved OpenSearch field path; empty sorts by relevance.
 	SortField string
 	SortOrder string

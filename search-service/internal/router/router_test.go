@@ -758,3 +758,30 @@ func TestErrorContractAcrossEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestParseCommaSeparatedParam(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		{"", nil},
+		{"  ", nil},
+		{"name", []string{"name"}},
+		{"name,kind", []string{"name", "kind"}},
+		{" name , kind ", []string{"name", "kind"}},
+		{"name,,kind", []string{"name", "kind"}},
+		{",", nil},
+	}
+	for _, tt := range cases {
+		got := parseCommaSeparatedParam(tt.raw)
+		if len(got) != len(tt.want) {
+			t.Errorf("parseCommaSeparatedParam(%q) = %v, want %v", tt.raw, got, tt.want)
+			continue
+		}
+		for i, v := range got {
+			if v != tt.want[i] {
+				t.Errorf("parseCommaSeparatedParam(%q)[%d] = %q, want %q", tt.raw, i, v, tt.want[i])
+			}
+		}
+	}
+}

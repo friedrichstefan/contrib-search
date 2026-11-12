@@ -89,12 +89,15 @@ func BuildQueryBody(req search.OpenSearchQuery) ([]byte, error) {
 		return nil, err
 	}
 	var lexicalFields []string
-	if len(req.ExactFields) > 0 {
-		lexicalFields = prefixedFields("default_fields", stringset.DedupeSorted(req.ExactFields))
+	if len(req.ExactFields) > 0 || len(req.FilterableSearchFields) > 0 {
+		parts := make([]string, 0, len(req.ExactFields)+len(req.FilterableSearchFields))
+		parts = append(parts, prefixedFields("default_fields", req.ExactFields)...)
+		parts = append(parts, prefixedFields("filterable_fields", req.FilterableSearchFields)...)
+		lexicalFields = stringset.DedupeSorted(parts)
 	} else {
 		lexicalFields = lexicalSearchFields(req.Fields)
 	}
-	semanticFields := prefixedFields("semantic_fields", stringset.DedupeSorted(req.SemanticFields))
+	semanticFields := prefixedFields("semantic_fields", req.SemanticFields)
 	filters := normalizeFilters(req.Filters)
 	accountFGAObjects := stringset.DedupeSorted(req.AccountFGAObjects)
 
@@ -108,7 +111,7 @@ func BuildQueryBody(req search.OpenSearchQuery) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("build semantic query clause: %w", err)
 		}
-	} else if len(req.ExactFields) > 0 && len(semanticFields) > 0 {
+	} else if len(semanticFields) > 0 {
 		semanticClause, err := buildSemanticQueryClause(query, semanticFields)
 		if err != nil {
 			return nil, fmt.Errorf("build semantic query clause for hybrid mode: %w", err)
@@ -274,20 +277,7 @@ func (c *Client) Search(ctx context.Context, query search.OpenSearchQuery) (sear
 		return search.OpenSearchPage{}, fmt.Errorf("at least one OpenSearch index is required")
 	}
 
-	body, err := BuildQueryBody(search.OpenSearchQuery{
-		Query:             query.Query,
-		Fields:            query.Fields,
-		ExactFields:       query.ExactFields,
-		SemanticFields:    query.SemanticFields,
-		Mode:              query.Mode,
-		Filters:           query.Filters,
-		AccountFGAObjects: query.AccountFGAObjects,
-		Size:              query.Size,
-		SearchAfter:       query.SearchAfter,
-		AggregationField:  query.AggregationField,
-		SortField:         query.SortField,
-		SortOrder:         query.SortOrder,
-	})
+	body, err := BuildQueryBody(query)
 	if err != nil {
 		return search.OpenSearchPage{}, fmt.Errorf("build OpenSearch query body: %w", err)
 	}
@@ -491,10 +481,8 @@ func prefixedField(prefix, field string) string {
 	if field == "" {
 		return ""
 	}
-	for _, existingPrefix := range []string{"default_fields.", "semantic_fields.", "filterable_fields."} {
-		if strings.HasPrefix(field, existingPrefix) {
-			return field
-		}
+	for _, p := range []string{"default_fields.", "semantic_fields.", "filterable_fields."} {
+		field = strings.TrimPrefix(field, p)
 	}
 	return prefix + "." + field
 }

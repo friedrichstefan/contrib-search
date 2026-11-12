@@ -219,24 +219,22 @@ func resolveResources(resource, resourcesParam string, hasFilters bool) []string
 	return []string{""}
 }
 
-func parseResources(raw string) []string {
-	var resources []string
-	for _, res := range strings.Split(raw, ",") {
-		if res = strings.TrimSpace(res); res != "" {
-			resources = append(resources, res)
+func parseCommaSeparatedParam(raw string) []string {
+	var parts []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			parts = append(parts, part)
 		}
 	}
-	return resources
+	return parts
+}
+
+func parseResources(raw string) []string {
+	return parseCommaSeparatedParam(raw)
 }
 
 func parseFieldsParam(raw string) []string {
-	var fields []string
-	for _, f := range strings.Split(raw, ",") {
-		if f = strings.TrimSpace(f); f != "" {
-			fields = append(fields, f)
-		}
-	}
-	return fields
+	return parseCommaSeparatedParam(raw)
 }
 
 func parseOptionalLimit(raw string) (int, error) {

@@ -512,3 +512,129 @@ func TestClientSearchKeepsSortValuesExact(t *testing.T) {
 		t.Fatalf("source decoding must be unchanged, got %T", page.Hits[0].Source["stars"])
 	}
 }
+
+func TestPrefixedFieldStripsExistingNamespacePrefix(t *testing.T) {
+	cases := []struct {
+		prefix string
+		field  string
+		want   string
+	}{
+		{"default_fields", "name", "default_fields.name"},
+		{"default_fields", "semantic_fields.foo", "default_fields.foo"},
+		{"default_fields", "filterable_fields.status", "default_fields.status"},
+		{"semantic_fields", "default_fields.description", "semantic_fields.description"},
+		{"filterable_fields", "semantic_fields.kind", "filterable_fields.kind"},
+		{"default_fields", "  default_fields.name  ", "default_fields.name"},
+		{"default_fields", "", ""},
+	}
+	for _, tt := range cases {
+		got := prefixedField(tt.prefix, tt.field)
+		if got != tt.want {
+			t.Errorf("prefixedField(%q, %q) = %q, want %q", tt.prefix, tt.field, got, tt.want)
+		}
+	}
+}
+
+func TestBuildQueryBodyExactFieldsWithPrePrefixedInput(t *testing.T) {
+	body, err := BuildQueryBody(search.OpenSearchQuery{
+		Query:       "hello",
+		ExactFields: []string{"semantic_fields.description", "name"},
+		Size:        10,
+	})
+	if err != nil {
+		t.Fatalf("BuildQueryBody returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	query := payload["query"].(map[string]any)
+	simple := query["simple_query_string"].(map[string]any)
+	fields := simple["fields"].([]any)
+	for _, f := range fields {
+		field := f.(string)
+		if !strings.HasPrefix(field, "default_fields.") {
+			t.Fatalf("expected only default_fields.* fields, got %q", field)
+		}
+	}
+	if !containsField(fields, "default_fields.description") {
+		t.Fatalf("expected default_fields.description (not semantic_fields.description) in %v", fields)
+	}
+}
+
+func TestBuildQueryBodyFilterableSearchFieldsUseFilterablePrefix(t *testing.T) {
+	body, err := BuildQueryBody(search.OpenSearchQuery{
+		Query:                  "Active",
+		FilterableSearchFields: []string{"status", "phase"},
+		Size:                   10,
+	})
+	if err != nil {
+		t.Fatalf("BuildQueryBody returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	query := payload["query"].(map[string]any)
+	simple := query["simple_query_string"].(map[string]any)
+	fields := simple["fields"].([]any)
+	if !containsField(fields, "filterable_fields.status") {
+		t.Fatalf("expected filterable_fields.status in %v", fields)
+	}
+	if !containsField(fields, "filterable_fields.phase") {
+		t.Fatalf("expected filterable_fields.phase in %v", fields)
+	}
+	if containsField(fields, "payload_text") {
+		t.Fatalf("payload_text must not appear when FilterableSearchFields is set")
+	}
+}
+
+func TestBuildQueryBodyExactAndFilterableSearchFieldsCombine(t *testing.T) {
+	body, err := BuildQueryBody(search.OpenSearchQuery{
+		Query:                  "hello",
+		ExactFields:            []string{"kind"},
+		FilterableSearchFields: []string{"status"},
+		Size:                   10,
+	})
+	if err != nil {
+		t.Fatalf("BuildQueryBody returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	query := payload["query"].(map[string]any)
+	simple := query["simple_query_string"].(map[string]any)
+	fields := simple["fields"].([]any)
+	if !containsField(fields, "default_fields.kind") {
+		t.Fatalf("expected default_fields.kind in %v", fields)
+	}
+	if !containsField(fields, "filterable_fields.status") {
+		t.Fatalf("expected filterable_fields.status in %v", fields)
+	}
+}
+
+func TestBuildQueryBodyFieldsAndSemanticFieldsProduceHybrid(t *testing.T) {
+	body, err := BuildQueryBody(search.OpenSearchQuery{
+		Query:          "hello",
+		Fields:         []string{"description", "name"},
+		SemanticFields: []string{"description"},
+		Size:           10,
+	})
+	if err != nil {
+		t.Fatalf("BuildQueryBody returned error: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	query := payload["query"].(map[string]any)
+	boolQ, ok := query["bool"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected bool query for hybrid, got %v", query)
+	}
+	should, ok := boolQ["should"].([]any)
+	if !ok || len(should) != 2 {
+		t.Fatalf("expected 2 should clauses for hybrid, got %v", boolQ["should"])
+	}
+}
